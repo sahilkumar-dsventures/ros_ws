@@ -1,0 +1,23 @@
+get_poses_subscriber:
+  ros__parameters:
+    # add any parameters you want here
+    topic_name: /isaac_joint_states
+
+wrist_camera_subscriber:
+  ros__parameters:
+    width: 720
+    height: 480
+
+env_camera_subscriber:
+  ros__parameters:
+    width: 720
+    height: 480
+
+data_recorder:
+  ros__parameters:
+    data_dir: /media/sarthak/a/ros_ws/lerobot/SO-ARM101_MoveIt_IsaacSim/
+    is_done_topic: /is_done
+    fps: 30
+    num_joints: 1
+    width: 720
+    height: 480
