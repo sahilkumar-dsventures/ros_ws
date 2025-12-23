@@ -41,13 +41,13 @@ class Camera_Subscriber(Node):
         super().__init__('camera_subscriber')
 
         # Declare a list of topics
-        self.declare_parameter('topics', ['/wrist_perspective', '/env_perspective', '/camera_array'])
+        self.declare_parameter('camera_topics', ['/wrist_perspective', '/env_perspective', '/camera_array'])
         self.declare_parameter('width', 640)
         self.declare_parameter('height', 480)
 
         self.width = self.get_parameter('width').value
         self.height = self.get_parameter('height').value
-        self.topics = self.get_parameter('topics').value
+        self.topics = self.get_parameter('camera_topics').value 
 
         self.subscriptions_list = []
 
@@ -154,7 +154,7 @@ class Data_Recorder(Node):
     def timer_callback(self , msg):
         global joint_states, latest_camera_frames
 
-        # Check wait condition
+        # # Check wait condition
         if joint_states is None:
             return
         
@@ -224,7 +224,7 @@ class Data_Recorder(Node):
         self.joint_states_velocity_buffer.clear()
         self.joint_states_effort_buffer.clear()
         self.timestamp_buffer.clear()
-
+    
     def _write_video(self, path, frames, fourcc):
         if not frames:
             return

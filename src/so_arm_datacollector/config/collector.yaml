@@ -5,13 +5,14 @@ get_poses_subscriber:
 
 camera_subscriber:
   ros__parameters:
-    topics: ['/wrist_perspective', '/env_perspective']
+    camera_topics: ['/wrist_perspective', '/env_perspective']
     width: 720
     height: 480
 
 data_recorder:
   ros__parameters:
     data_dir: /media/sarthak/a/ros_ws/lerobot/SO-ARM101_MoveIt_IsaacSim/
+    camera_topics: ['/wrist_perspective', '/env_perspective']
     is_done_topic: /is_done
     fps: 30
     num_joints: 1
