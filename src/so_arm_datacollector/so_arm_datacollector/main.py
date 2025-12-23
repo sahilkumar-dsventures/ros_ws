@@ -234,7 +234,6 @@ class Data_Recorder(Node):
             out.write(frame)
         out.release()
 
-
 def main():
 
     rclpy.init(args=None)
