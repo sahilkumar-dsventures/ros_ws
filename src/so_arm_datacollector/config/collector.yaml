@@ -3,13 +3,9 @@ get_poses_subscriber:
     # add any parameters you want here
     topic_name: /isaac_joint_states
 
-wrist_camera_subscriber:
+camera_subscriber:
   ros__parameters:
-    width: 720
-    height: 480
-
-env_camera_subscriber:
-  ros__parameters:
+    topics: ['/wrist_perspective', '/env_perspective']
     width: 720
     height: 480
 

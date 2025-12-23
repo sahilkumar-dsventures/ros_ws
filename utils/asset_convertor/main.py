@@ -28,7 +28,19 @@ def convert(input_path, output_path):
     print(f"🔄 Starting conversion: {input_path} -> {output_path}")
     
 
+    # task = conv_instance.create_converter_task(input_path, output_path, progress_callback, context)
     task = conv_instance.create_converter_task(input_path, output_path, None, None)
+    
+    # DEBUG: Inspect the task object
+    print(f"DEBUG: Task dir: {dir(task)}")
+    
+    print("⏳ Waiting for conversion to finish...")
+    # Blocking wait - checking if this avoids the loop issue
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(task.wait_until_finished())
+    except Exception as e:
+        print(f"⚠️ Warning during await: {e}")
     
     # Check final status
     if task.get_status(): # Assuming non-zero or truthy is done, relying on error msg
