@@ -21,11 +21,16 @@ def main():
     app = omni.kit.app.get_app()
     ext_mgr = app.get_extension_manager()
 
+    
+    ext_mgr.set_extension_enabled("isaacsim.ros2.bridge", True)
+
     ext_mgr.set_extension_enabled("isaacsim.ros2.sim_control", True)
 
+    # Let extensions initialize
+    simulation_app.update()
     simulation_app.update()
 
-    # 3️⃣ Load USD
+    # 3️Load USD
     usd_context = omni.usd.get_context()
     usd_context.open_stage(USD_PATH)
 
@@ -33,7 +38,7 @@ def main():
     simulation_app.update()
 
     if SIMULATION_PLAY:
-        # 5️⃣ Start simulation (physics + /clock)
+        # Start simulation (physics + /clock)
         timeline = omni.timeline.get_timeline_interface()
         timeline.play()
     else:
