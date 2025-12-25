@@ -14,7 +14,7 @@ trap restore EXIT
 
 # Validate argument
 if [ -z "$1" ]; then
-    echo "⚠️  No script path provided. Usage: ./run_in_kit.sh <script_path>"
+    echo "⚠️  No script path provided. Usage: ./python.sh <script_path>"
     exit 1
 fi
 
@@ -25,9 +25,9 @@ fi
 
 script_path=$(realpath "$1")
 
-# Navigate to Isaac Sim's Kit directory
+# Navigate to Isaac Sim's directory
 cd /media/sarthak/a/isaac_sim/ || {
-    echo "❌ Failed to change directory to Isaac Sim Kit."
+    echo "❌ Failed to change directory to Isaac Sim's directory."
     exit 1
 }
 
@@ -39,8 +39,8 @@ fi
 
 echo "Running script: $script_path 🚀"
 
-# Optional GPU lib path fix
-GPU_LIB_PATH="/media/sarthak/a/isaac_sim/extscache/omni.gpu_foundation-0.0.0+69cbf6ad.lx64.r.cp311/bin/deps"
-export LD_LIBRARY_PATH="$GPU_LIB_PATH:$LD_LIBRARY_PATH"
+# # Optional GPU lib path fix
+# GPU_LIB_PATH="/media/sarthak/a/isaac_sim/extscache/omni.gpu_foundation-0.0.0+69cbf6ad.lx64.r.cp311/bin/deps"
+# export LD_LIBRARY_PATH="$GPU_LIB_PATH:$LD_LIBRARY_PATH"
 
 ./python.sh "$script_path"
