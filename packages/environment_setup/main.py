@@ -7,7 +7,6 @@ import sys
 from omni.isaac.kit import SimulationApp
 simulation_app = SimulationApp({"headless": False})
 
-
 import omni.usd
 import omni.kit.app
 import omni.timeline
@@ -16,11 +15,9 @@ import omni.timeline
 USD_PATH = "/media/sarthak/a/Experiments/so_100_arm.usd"
 SIMULATION_PLAY = True
 
-
 def main():
     app = omni.kit.app.get_app()
     ext_mgr = app.get_extension_manager()
-
     
     ext_mgr.set_extension_enabled("isaacsim.ros2.bridge", True)
 

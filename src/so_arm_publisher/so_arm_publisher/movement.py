@@ -44,7 +44,7 @@ class SOArmPublisher(Node):
         self.current_keyframe_idx = 0
         self.next_keyframe_idx = 1
         self.interpolation_factor = 0.0
-        self.interpolation_step = 0.05  # Adjust this for speed (0.05 means 20 steps between keyframes)
+        self.interpolation_step = 0.05  # Adjust this    for speed (0.05 means 20 steps between keyframes)
 
         timer_period = 0.05  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
