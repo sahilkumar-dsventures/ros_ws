@@ -27,66 +27,75 @@ class SOArmPublisher(Node):
             'Jaw'
         ]
 
-        num_joints = len(self.joint_state.name)
+        # Define keyframes for pick and place cycle
+        # [Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw]
+        self.keyframes = [
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],      # 0: Home
+            [0.3, 0.0, 0.0, 0.0, 0.0, 0.0],      # 1: Over Pick
+            [0.3, 0.3, 0.3, 0.0, 0.0, 0.0],      # 2: Pick Down (Jaw open)
+            [0.3, 0.3, 0.3, 0.0, 0.0, 0.5],      # 3: Close Jaw
+            [0.3, 0.0, 0.0, 0.0, 0.0, 0.5],      # 4: Lift
+            [-0.3, 0.0, 0.0, 0.0, 0.0, 0.5],     # 5: Over Place
+            [-0.3, 0.3, 0.3, 0.0, 0.0, 0.5],     # 6: Place Down
+            [-0.3, 0.3, 0.3, 0.0, 0.0, 0.0],     # 7: Open Jaw
+            [-0.3, 0.0, 0.0, 0.0, 0.0, 0.0],     # 8: Lift
+        ]
 
-        # make sure kit's editor is playing for receiving messages
-        self.joint_state.position = np.array([0.0] * num_joints, dtype=np.float64).tolist()
-        self.default_joints = [0, 0, 0, 0, 0, 0]
-
-        # Limiting the movements to a smaller range (this is not the range of the robot, just the range of the movement)
-        self.max_joints = np.array(self.default_joints) + 0.3
-        self.min_joints = np.array(self.default_joints) - 0.3
-
-        # position control the robot to wiggle around each joint
-        self.time_start = time.time()
+        self.current_keyframe_idx = 0
+        self.next_keyframe_idx = 1
+        self.interpolation_factor = 0.0
+        self.interpolation_step = 0.05  # Adjust this for speed (0.05 means 20 steps between keyframes)
 
         timer_period = 0.05  # seconds
-        self.timer1 = self.create_timer(timer_period, self.timer_callback)
-        self.timer2 = self.create_timer(timer_period, self.done_callback)
+        self.timer = self.create_timer(timer_period, self.timer_callback)
+        self.done_timer = self.create_timer(timer_period, self.done_callback)
 
-        # self.get_logger().info("SO100 custom publisher started 🚀")
-
+        self.get_logger().info("SO100 Pick and Place movement started 🚀")
 
     def timer_callback(self):
         self.joint_state.header.stamp = self.get_clock().now().to_msg()
 
-        joint_position = (
-            np.cos(time.time() - self.time_start) * (self.max_joints - self.min_joints) * 0.5 + self.default_joints
-        )
+        start_pose = np.array(self.keyframes[self.current_keyframe_idx])
+        end_pose = np.array(self.keyframes[self.next_keyframe_idx])
         
-        self.joint_state.position = joint_position.tolist()
+        # Linear interpolation between keyframes
+        current_pose = (1 - self.interpolation_factor) * start_pose + self.interpolation_factor * end_pose
+        
+        self.joint_state.position = current_pose.tolist()
 
         # Publish the message to the topic
         self.publisher_.publish(self.joint_state)
 
-        # self.get_logger().info(f"Joint state: {self.joint_state}")
-
-        # self.get_logger().info(f"Joint position: {joint_position}")
-
+        # Advance interpolation
+        self.interpolation_factor += self.interpolation_step
+        if self.interpolation_factor >= 1.0:
+            self.interpolation_factor = 0.0
+            self.current_keyframe_idx = self.next_keyframe_idx
+            self.next_keyframe_idx = (self.next_keyframe_idx + 1) % len(self.keyframes)
 
     def done_callback(self):
-        # biased random number
         msg = Bool()
-        msg.data = False
-
-        random_int = np.random.randint(0, 1000)
-
-        if random_int < 995:
-            self.done_publisher.publish(msg)
-            return
-
-        msg.data = True
+        # Publish True if we just finished a full cycle (returned to home)
+        if self.current_keyframe_idx == 0 and self.interpolation_factor < self.interpolation_step:
+            msg.data = True
+        else:
+            msg.data = False
+        
         self.done_publisher.publish(msg)
 
     def destroy_node(self):
         self.timer.cancel()
+        self.done_timer.cancel()
         self.publisher_.destroy()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = SOArmPublisher()
-    rclpy.spin(node)
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     node.destroy_node()
     rclpy.shutdown()
 
