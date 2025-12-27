@@ -1,7 +1,3 @@
-import argparse
-import os
-import sys
-
 # Initialize SimulationApp
 # It is important to initialize this before other omni imports
 from omni.isaac.kit import SimulationApp
@@ -10,6 +6,11 @@ simulation_app = SimulationApp({"headless": False})
 import omni.usd
 import omni.kit.app
 import omni.timeline
+from omni.isaac.core.utils.nucleus import get_assets_root_path
+from omni.isaac.core.utils.stage import add_reference_to_stage
+from omni.isaac.core.objects import DynamicSphere
+from omni.isaac.core.prims import XFormPrim
+import numpy as np
 
 # Define the USD path variable
 USD_PATH = "/media/sarthak/a/Experiments/so_100_arm.usd"
@@ -33,6 +34,20 @@ def main():
 
     # Wait for stage
     simulation_app.update()
+
+    # Load Cup and Ball from Isaac Sim assets
+    assets_root_path = get_assets_root_path()
+    if assets_root_path:
+        # Load Cup (YCB Mug)
+        cup_path = assets_root_path + "/Isaac/Props/YCB/Axis_Aligned/025_mug.usd"
+        add_reference_to_stage(usd_path=cup_path, prim_path="/World/Cup")
+        cup = XFormPrim(prim_path="/World/Cup", name="cup")
+        cup.set_world_pose(position=np.array([0.5, 0.0, 0.1]))
+        
+        # Load Ball (Dynamic Sphere)
+        DynamicSphere(prim_path="/World/Ball", position=np.array([0.5, 0.0, 0.3]), radius=0.03, color=np.array([1.0, 0.0, 0.0]))
+    else:
+        print("Could not find Isaac Sim assets folder")
 
     if SIMULATION_PLAY:
         # Start simulation (physics + /clock)
