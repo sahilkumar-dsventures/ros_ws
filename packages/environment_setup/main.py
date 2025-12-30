@@ -8,7 +8,6 @@ import omni.kit.app
 import omni.timeline
 from omni.isaac.core.utils.nucleus import get_assets_root_path
 from omni.isaac.core.utils.stage import add_reference_to_stage
-from omni.isaac.core.objects import DynamicSphere
 from omni.isaac.core.prims import XFormPrim
 import numpy as np
 
@@ -28,7 +27,7 @@ def main():
     simulation_app.update()
     simulation_app.update()
 
-    # 3️Load USD
+    # Load USD
     usd_context = omni.usd.get_context()
     usd_context.open_stage(USD_PATH)
 
@@ -44,8 +43,11 @@ def main():
         cup = XFormPrim(prim_path="/World/Cup", name="cup")
         cup.set_world_pose(position=np.array([0.5, 0.0, 0.1]))
         
-        # Load Ball (Dynamic Sphere)
-        DynamicSphere(prim_path="/World/Ball", position=np.array([0.5, 0.0, 0.3]), radius=0.03, color=np.array([1.0, 0.0, 0.0]))
+        # Load Plate (YCB Plate)
+        plate_path = assets_root_path + "/Isaac/Props/YCB/Axis_Aligned/029_plate.usd"
+        add_reference_to_stage(usd_path=plate_path, prim_path="/World/Plate")
+        plate = XFormPrim(prim_path="/World/Plate", name="plate")
+        plate.set_world_pose(position=np.array([0.5, 0.2, 0.05]))
     else:
         print("Could not find Isaac Sim assets folder")
 
@@ -64,5 +66,6 @@ def main():
         simulation_app.update()
 
     simulation_app.close()
+
 if __name__ == "__main__":
     main()

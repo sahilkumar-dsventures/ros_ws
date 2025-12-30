@@ -1,0 +1,10 @@
+policy_node:
+  ros__parameters:
+    joint_state_topic: "/isaac_joint_states"
+    env_camera_topic: "/env_perspective"
+    wrist_camera_topic: "/wrist_perspective"
+    width: 640
+    height: 480
+    policy_server_url: "http://localhost:8000/predict"
+    publish_topic: "/joint_command"
+    control_frequency: 10.0
