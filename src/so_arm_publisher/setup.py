@@ -1,4 +1,5 @@
 from setuptools import find_packages, setup
+from glob import glob
 
 package_name = 'so_arm_publisher'
 
@@ -10,8 +11,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/policy_launch.py']),
-        ('share/' + package_name + '/config', ['config/policy_params.yaml']),
+        ('share/' + package_name + '/launch', glob('launch/*.py')),
+        ('share/' + package_name + '/config', glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,6 +30,7 @@ setup(
             'so_arm_movement = so_arm_publisher.movement:main',
             'so_arm_teleop = so_arm_publisher.teleop:main',
             'so_arm_policy = so_arm_publisher.policy:main',
+            'franka_policy = so_arm_publisher.franka_policy:main'
         ],
     },
 )

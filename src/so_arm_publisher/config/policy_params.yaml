@@ -3,8 +3,8 @@ policy_node:
     joint_state_topic: "/isaac_joint_states"
     env_camera_topic: "/env_perspective"
     wrist_camera_topic: "/wrist_perspective"
-    width: 640
-    height: 480
+    width: 224
+    height: 224
     policy_server_url: "http://localhost:8000/predict"
     publish_topic: "/joint_command"
-    control_frequency: 10.0
+    control_frequency: 500.0
