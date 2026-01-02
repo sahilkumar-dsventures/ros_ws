@@ -6,5 +6,8 @@ policy_node:
     width: 224
     height: 224
     policy_server_url: "http://localhost:8000/predict"
-    publish_topic: "/joint_command"
-    control_frequency: 500.0
+    # Pi0 outputs Cartesian EE deltas - publish to these topics for Isaac Sim
+    publish_topic: "/ee_delta_command"     # Twist message with [dx, dy, dz, droll, dpitch, dyaw]
+    gripper_topic: "/gripper_command"      # Float64MultiArray with [finger1, finger2]
+    control_frequency: 10.0
+    action_scale: 1.0  # Scale factor for action deltas (increase if movements are too small)

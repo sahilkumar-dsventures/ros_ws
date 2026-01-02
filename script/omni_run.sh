@@ -14,7 +14,7 @@ trap restore EXIT
 
 # Validate argument
 if [ -z "$1" ]; then
-    echo "⚠️  No script path provided. Usage: ./python.sh <script_path>"
+    echo "⚠️  No script path provided. Usage: ./omni_run.sh <script_path>"
     exit 1
 fi
 
@@ -37,10 +37,27 @@ if ! source setup_python_env.sh; then
     exit 1
 fi
 
-echo "Running script: $script_path 🚀"
+# ============================================
+# ROS 2 Bridge Configuration for Isaac Sim
+# ============================================
+# These environment variables are REQUIRED for Isaac Sim's 
+# internal ROS 2 bridge to work properly.
 
-# # Optional GPU lib path fix
-# GPU_LIB_PATH="/media/sarthak/a/isaac_sim/extscache/omni.gpu_foundation-0.0.0+69cbf6ad.lx64.r.cp311/bin/deps"
-# export LD_LIBRARY_PATH="$GPU_LIB_PATH:$LD_LIBRARY_PATH"
+export ROS_DISTRO=humble
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+# Use the path relative to Isaac Sim directory as shown in the error message
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:$(pwd)/exts/isaacsim.ros2.bridge/humble/lib"
+
+echo "============================================"
+echo "🤖 Isaac Sim ROS 2 Bridge Configuration"
+echo "============================================"
+echo "ROS_DISTRO=$ROS_DISTRO"
+echo "RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
+echo "LD_LIBRARY_PATH includes: $(pwd)/exts/isaacsim.ros2.bridge/humble/lib"
+echo "============================================"
+
+echo ""
+echo "Running script: $script_path 🚀"
+echo ""
 
 ./python.sh "$script_path"
