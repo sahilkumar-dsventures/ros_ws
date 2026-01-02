@@ -8,7 +8,7 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory('so_arm_publisher')
     
     # Path to the config file
-    config_file = os.path.join(pkg_dir, 'config', 'policy_params.yaml')
+    config_file = os.path.join(pkg_dir, 'config', 'so_arm_param.yaml')
     
     return LaunchDescription([
         Node(

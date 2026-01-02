@@ -44,6 +44,7 @@ class PolicyNode(Node):
         self.declare_parameter('publish_topic', '/joint_command')
         self.declare_parameter('control_frequency', 10.0)
         self.declare_parameter('action_scale', 1.0)
+        self.declare_parameter('task_description', 'Pick up the object')
         
         # State
         self.joint_state = None
@@ -65,6 +66,7 @@ class PolicyNode(Node):
         self.publish_topic = self.get_parameter('publish_topic').value
         control_freq = self.get_parameter('control_frequency').value
         self.action_scale = self.get_parameter('action_scale').value
+        self.task_description = self.get_parameter('task_description').value
         
         # Joint names (SO100: 5 arm joints + 1 jaw/gripper = 6 DOF)
         self.arm_joint_names = ['Rotation', 'Pitch', 'Elbow', 'Wrist_Pitch', 'Wrist_Roll']
@@ -208,11 +210,10 @@ class PolicyNode(Node):
                 so100_state = list(positions) + [0.0] * (6 - len(positions))
                 self.get_logger().warning(f'Unexpected DOF count: {len(positions)}, expected 6')
             
-            # Build JSON payload
             payload = {
                 "images": [env_b64, wrist_b64],
                 "joint_state": so100_state,  # 6 DOF for SO100
-                "task": "Pick up the object"
+                "task": self.task_description
             }
             
             # Send as JSON
