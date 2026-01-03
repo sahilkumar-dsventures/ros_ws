@@ -1,0 +1,27 @@
+policy_node:
+  ros__parameters:
+    # Robot configuration
+    robot_type: "so101"
+    input_dof: 6           # SO101: 5 arm + 1 jaw
+    libero_dof: 8          # LIBERO format for Pi0 server
+    
+    # ROS topics - input
+    joint_state_topic: "/isaac_joint_states"
+    env_camera_topic: "/env_perspective"
+    wrist_camera_topic: "/wrist_perspective"
+    
+    # ROS topics - output (Isaac Sim IK will subscribe to these)
+    ee_delta_topic: "/so101/ee_delta_command"
+    gripper_topic: "/so101/gripper_command"
+    
+    # Image processing
+    width: 224
+    height: 224
+    
+    # Policy server
+    policy_server_url: "http://localhost:8000/predict"
+    task_description: "Pick up the object"
+    
+    # Control parameters
+    control_frequency: 10.0
+    action_scale: 1.0      # Scale factor for EE deltas (increase if movements too small)
