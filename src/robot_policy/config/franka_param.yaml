@@ -24,4 +24,4 @@ policy_node:
     
     # Control parameters
     control_frequency: 10.0
-    action_scale: 1.0      # Scale factor for EE deltas
+    action_scale: 0.1      # Scale factor for EE deltas (reduced to prevent extreme movements)

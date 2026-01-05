@@ -16,25 +16,31 @@ SO101 Configuration:
 Setup in OmniGraph:
 1. Create a Python Script node
 2. Set this file as the script path
-3. Add inputs: linear_x/y/z (float), angular_x/y/z (float), gripper (float)
-4. Add output: joint_positions (float[]), jaw_position (float)
-5. Connect to ROS 2 Twist subscriber for EE delta
+3. Add inputs: 
+   - linear (vector3d) - connect from ROS2 Subscribe Twist linearVelocity output
+   - angular (vector3d) - connect from ROS2 Subscribe Twist angularVelocity output
+     NOTE: angular.z carries GRIPPER value (-1 to +1), not yaw rotation!
+4. Add outputs: joint_positions (double[6] - 5 arm + 1 gripper), jaw_position (double)
+5. Connect ROS2 Subscribe Twist node to this Python Script node
 """
 
 import numpy as np
-from omni.isaac.core.articulations import Articulation
+from isaacsim.core.prims import SingleArticulation
 from omni.isaac.motion_generation import LulaKinematicsSolver
 from omni.isaac.core.utils.rotations import euler_angles_to_quat, quat_to_euler_angles
 import omni.graph.core as og
+import omni.timeline
 import os
 
 # Global cache
 _solver = None
 _robot = None
+_physics_ready = False
+_init_frame_count = 0
 
 # SO101 Configuration
 _SO101_URDF = "/media/sarthak/a/Experiments/SO-ARM101_MoveIt_IsaacSim/src/so_arm_description/urdf/so101_new_calib.urdf"
-_ROBOT_PRIM_PATH = "/so101_new_calib"  # Robot prim path in USD stage
+_ROBOT_PRIM_PATH = "/so101_new_calib/base"  # Robot articulation root prim path in USD stage
 _EE_FRAME = "gripper"  # End-effector frame name in URDF
 
 # Joint names in order
@@ -50,54 +56,83 @@ def _create_lula_robot_description():
     Returns path to the generated file.
     """
     import tempfile
-    import yaml
     
-    robot_desc = {
-        "robot": {
-            "name": "so101",
-            "urdf_path": _SO101_URDF,
-            "end_effector_frame": _EE_FRAME,
-            "base_frame": "base",
-            "cspace_to_urdf_rules": [
-                {"joint": name, "rule": "direct"} for name in _ARM_JOINTS
-            ],
-            "default_cspace_position": [0.0] * len(_ARM_JOINTS),
-            "cspace_position_limits": {
-                "lower": [-1.92, -1.75, -1.75, -1.66, -2.79],  # From URDF limits
-                "upper": [1.92, 1.75, 1.57, 1.66, 2.79]
-            }
-        }
-    }
+    # Lula YAML format based on Isaac Sim examples
+    # Note: Using simple string format to ensure correct YAML structure
+    yaml_content = f"""# SO101 Robot Description for Lula
+api_version: 1.0
+
+# Configuration space joints
+cspace:
+    - Rotation
+    - Pitch
+    - Elbow
+    - Wrist_Pitch
+    - Wrist_Roll
+
+# Default joint positions (home position)
+default_q: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Gripper joint is fixed for IK purposes
+cspace_to_urdf_rules:
+    - {{name: Jaw, rule: fixed, value: 0.5}}
+
+# Joint limits and dynamics (optional but helpful)
+acceleration_limits: [5.0, 5.0, 5.0, 5.0, 5.0]
+jerk_limits: [2500.0, 2500.0, 2500.0, 2500.0, 2500.0]
+"""
     
     # Write to temp file
     desc_path = os.path.join(tempfile.gettempdir(), "so101_lula_desc.yaml")
     with open(desc_path, 'w') as f:
-        yaml.dump(robot_desc, f)
+        f.write(yaml_content)
     
     return desc_path
 
 
 def setup(db: og.Database):
     """Initialize SO101 robot and Lula IK solver."""
-    global _solver, _robot
+    global _solver, _robot, _physics_ready, _init_frame_count
+    
+    # Check if simulation is playing
+    timeline = omni.timeline.get_timeline_interface()
+    if not timeline.is_playing():
+        _physics_ready = False
+        _init_frame_count = 0
+        return  # Don't initialize until simulation starts
+    
+    # Wait a few frames for physics to fully initialize
+    _init_frame_count += 1
+    if _init_frame_count < 10:  # Wait ~10 frames
+        return
     
     robot_prim_path = _ROBOT_PRIM_PATH
     
     # Initialize robot articulation
     if _robot is None:
-        _robot = Articulation(robot_prim_path)
-        _robot.initialize()
-        db.log_info(f"Initialized SO101 robot at: {robot_prim_path}")
+        try:
+            _robot = SingleArticulation(robot_prim_path)
+            _robot.initialize()
+            # Test if we can actually read joint positions
+            test_joints = _robot.get_joint_positions()
+            if test_joints is None:
+                _robot = None
+                return  # Physics not ready yet
+            _physics_ready = True
+            db.log_info(f"Initialized SO101 robot at: {robot_prim_path}")
+        except Exception as e:
+            _robot = None
+            _physics_ready = False
+            return  # Silently retry next frame
     
     # Initialize Lula IK Solver with custom SO101 config
     if _solver is None:
         try:
-            # Try with custom description
+            # Try with custom description (Isaac Sim 5.1 API)
             robot_desc_path = _create_lula_robot_description()
             _solver = LulaKinematicsSolver(
                 robot_description_path=robot_desc_path,
-                urdf_path=_SO101_URDF,
-                robot_name="so101"
+                urdf_path=_SO101_URDF
             )
             db.log_info("Initialized Lula IK solver for SO101 with custom URDF")
         except Exception as e:
@@ -107,9 +142,11 @@ def setup(db: og.Database):
 
 def cleanup(db: og.Database):
     """Clean up on node removal."""
-    global _solver, _robot
+    global _solver, _robot, _physics_ready, _init_frame_count
     _solver = None
     _robot = None
+    _physics_ready = False
+    _init_frame_count = 0
 
 
 def _jacobian_ik(robot, target_pos, target_rpy, max_iter=50, tolerance=1e-3):
@@ -152,84 +189,165 @@ def compute(db: og.Database):
     """
     Compute IK from EE delta to joint positions for SO101.
     
-    Inputs (from ROS 2 Twist via OmniGraph):
-        - linear_x, linear_y, linear_z: EE position delta (meters)
-        - angular_x, angular_y, angular_z: EE rotation delta (roll, pitch, yaw radians)
-        - gripper: Gripper/Jaw command (-1 to +1)
+    Inputs (from ROS 2 Twist via OmniGraph - connect directly from ROS2 Subscribe Twist):
+        - linear: vector3d (x, y, z) - EE position delta in meters
+        - angular: vector3d (x, y, z) - EE rotation delta (roll, pitch, yaw) in radians
+        - gripper: double - Gripper/Jaw command (-1 to +1)
     
     Outputs:
-        - joint_positions: 5-element array for SO101 arm joints
-        - jaw_position: Mapped jaw position
+        - joint_positions: 5-element double array for SO101 arm joints
+        - jaw_position: Mapped jaw position (double)
     """
-    global _solver, _robot
+    global _solver, _robot, _physics_ready
     
-    if _robot is None:
-        db.log_warning("Robot not initialized")
-        return False
+    # Check if simulation is playing
+    timeline = omni.timeline.get_timeline_interface()
+    if not timeline.is_playing():
+        return True  # Silently skip if not playing
     
-    # Get delta from inputs
-    delta_pos = np.array([
-        db.inputs.linear_x,
-        db.inputs.linear_y,
-        db.inputs.linear_z
-    ])
+    # Check if physics is ready and robot is initialized
+    if not _physics_ready or _robot is None:
+        # Try to initialize now
+        setup(db)
+        if not _physics_ready or _robot is None:
+            return True  # Still not ready, skip silently
     
-    delta_rpy = np.array([
-        db.inputs.angular_x,
-        db.inputs.angular_y,
-        db.inputs.angular_z
-    ])
+    # Get delta from vector3 inputs (directly from ROS2 Subscribe Twist node)
+    # linear = (x, y, z) position delta
+    # angular = (roll, pitch, GRIPPER) - angular.z carries gripper value, not yaw!
+    linear = db.inputs.linear
+    angular = db.inputs.angular
+    
+    # Check if inputs are valid (not None and have data)
+    if linear is None or angular is None:
+        return True  # No ROS2 message received yet, skip silently
+    
+    try:
+        delta_pos = np.array([linear[0], linear[1], linear[2]])
+        # Only use angular.x and angular.y for rotation (roll, pitch)
+        # angular.z contains gripper value, not yaw
+        delta_rpy = np.array([angular[0], angular[1], 0.0])  # No yaw input
+        gripper_from_twist = angular[2]  # Gripper embedded in angular.z
+    except (TypeError, IndexError):
+        return True  # Invalid input format, skip silently
     
     # Skip if no movement
     if np.allclose(delta_pos, 0) and np.allclose(delta_rpy, 0):
         return True
     
     try:
-        if _solver is not None and _solver != "fallback":
-            # Use Lula solver
-            ee_pose = _solver.compute_end_effector_pose()
-            current_pos = np.array(ee_pose[:3])
-            current_quat = ee_pose[3:]
+        target_joints = None
+        use_fallback = (_solver is None or _solver == "fallback")
+        
+        if not use_fallback:
+            # Try Lula solver
+            try:
+                # Get current joint positions from robot
+                current_q = _robot.get_joint_positions()
+                if current_q is None:
+                    _physics_ready = False
+                    return True
+                current_q = np.array(current_q[:5])
+                
+                # Get current EE pose using forward kinematics
+                # Returns (position, rotation_matrix) - rotation is 3x3 matrix
+                ee_pos, ee_rot_matrix = _solver.compute_forward_kinematics(
+                    frame_name=_EE_FRAME,
+                    joint_positions=current_q
+                )
+                
+                # Convert rotation matrix to quaternion using scipy
+                from scipy.spatial.transform import Rotation
+                current_quat = Rotation.from_matrix(ee_rot_matrix).as_quat()  # [x,y,z,w]
+                # Convert to [w,x,y,z] format expected by Isaac Sim
+                current_quat = np.array([current_quat[3], current_quat[0], current_quat[1], current_quat[2]])
+                
+                # Compute target EE pose
+                target_pos = np.array(ee_pos) + delta_pos
+                current_rpy = quat_to_euler_angles(current_quat)
+                target_rpy = current_rpy + delta_rpy
+                target_quat = euler_angles_to_quat(target_rpy)
+                
+                # Solve IK
+                ik_result, success = _solver.compute_inverse_kinematics(
+                    frame_name=_EE_FRAME,
+                    target_position=target_pos,
+                    target_orientation=target_quat
+                )
+                
+                if success:
+                    target_joints = np.array(ik_result)
+                else:
+                    use_fallback = True
+            except Exception as e:
+                db.log_warning(f"Lula IK error: {e}, using fallback")
+                use_fallback = True
+        
+        # Fallback: Simplified Jacobian-like mapping
+        if use_fallback or target_joints is None:
+            try:
+                joint_positions = _robot.get_joint_positions()
+                if joint_positions is None:
+                    _physics_ready = False
+                    return True
+                current_joints = np.array(joint_positions[:5])
+            except Exception as e:
+                _physics_ready = False
+                return True
             
-            target_pos = current_pos + delta_pos
-            current_rpy = quat_to_euler_angles(current_quat)
-            target_rpy = current_rpy + delta_rpy
-            target_quat = euler_angles_to_quat(target_rpy)
+            # Scale down the delta - different scales for different axes
+            # Z movements were causing spinning, so reduce Z sensitivity
+            pos_scale = 0.05    # Position scale (meters to radians, approximate)
+            rot_scale = 0.1     # Rotation scale
             
-            action, success = _solver.compute_inverse_kinematics(
-                target_position=target_pos,
-                target_orientation=target_quat
-            )
-            
-            if success:
-                db.outputs.joint_positions = action.joint_positions.tolist()
-            else:
-                db.log_warning("IK solution failed")
-                return False
-        else:
-            # Fallback: Simplified Jacobian-like mapping (from original policy.py)
-            # This is approximate but works without complex IK setup
-            current_joints = np.array(_robot.get_joint_positions()[:5])
-            
-            scale = 1.0
+            # Improved Jacobian-like mapping for SO101
+            # SO101 joints: [Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll]
+            # Mapping EE movements to joint movements (approximate):
             joint_delta = np.zeros(5)
-            joint_delta[0] = delta_pos[1] * scale       # Rotation affects Y
-            joint_delta[1] = -delta_pos[2] * scale      # Pitch affects Z
-            joint_delta[2] = delta_pos[0] * scale       # Elbow affects X
-            joint_delta[3] = delta_rpy[1] * scale       # Wrist pitch
-            joint_delta[4] = delta_rpy[0] * scale       # Wrist roll
+            
+            # Rotation joint: controls yaw (Y-axis movement + yaw rotation)
+            joint_delta[0] = delta_pos[1] * pos_scale + delta_rpy[2] * rot_scale
+            
+            # Pitch joint: controls up/down reach (Z-axis) - REDUCED sensitivity
+            joint_delta[1] = -delta_pos[2] * pos_scale * 0.5  # Halved Z sensitivity
+            
+            # Elbow joint: controls forward reach (X-axis)  
+            joint_delta[2] = delta_pos[0] * pos_scale + delta_pos[2] * pos_scale * 0.3
+            
+            # Wrist Pitch: controls EE pitch orientation
+            joint_delta[3] = delta_rpy[1] * rot_scale
+            
+            # Wrist Roll: controls EE roll orientation
+            joint_delta[4] = delta_rpy[0] * rot_scale
             
             target_joints = current_joints + joint_delta
-            db.outputs.joint_positions = target_joints.tolist()
+            
+            # Clamp joints to reasonable limits to prevent runaway
+            joint_limits = np.array([
+                [-1.5, 1.5],    # Rotation
+                [-1.5, 1.5],    # Pitch
+                [-1.5, 1.5],    # Elbow
+                [-1.5, 1.5],    # Wrist Pitch
+                [-2.5, 2.5]     # Wrist Roll
+            ])
+            for i in range(5):
+                target_joints[i] = np.clip(target_joints[i], joint_limits[i, 0], joint_limits[i, 1])
         
-        # Handle gripper (Jaw)
-        gripper_cmd = db.inputs.gripper if hasattr(db.inputs, 'gripper') else 0.0
-        # Map [-1, +1] to Jaw position range from URDF: [-0.17, 1.75] radians
-        # -1 = close (0), +1 = open (1.75)
+        # Handle gripper (Jaw) - extracted from angular.z of Twist message
+        gripper_cmd = gripper_from_twist
+        if gripper_cmd is None:
+            gripper_cmd = 0.0
+        # Map [-1, +1] to Jaw position range from URDF: [0, 1.0] radians
+        # -1 = close (0), +1 = open (1.0)
         jaw_min = 0.0
         jaw_max = 1.0
         jaw_pos = jaw_min + (jaw_max - jaw_min) * (gripper_cmd + 1.0) / 2.0
-        db.outputs.jaw_position = max(jaw_min, min(jaw_max, jaw_pos))
+        jaw_pos = max(jaw_min, min(jaw_max, jaw_pos))
+        
+        # Output combined 6-element array (5 arm joints + 1 gripper)
+        all_joints = np.append(target_joints, jaw_pos)
+        db.outputs.joint_positions = all_joints.tolist()
+        db.outputs.jaw_position = jaw_pos
         
         return True
         
