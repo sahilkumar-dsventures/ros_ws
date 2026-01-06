@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'policy = robot_policy.policy:main',
+            'policy_joint = robot_policy.policy_joint:main',
         ],
     },
 )

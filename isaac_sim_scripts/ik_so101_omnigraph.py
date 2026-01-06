@@ -17,9 +17,10 @@ Setup in OmniGraph:
 1. Create a Python Script node
 2. Set this file as the script path
 3. Add inputs: 
-   - linear (vector3d) - connect from ROS2 Subscribe Twist linearVelocity output
-   - angular (vector3d) - connect from ROS2 Subscribe Twist angularVelocity output
-     NOTE: angular.z carries GRIPPER value (-1 to +1), not yaw rotation!
+   - linear (vector3d) - connect from ROS2 Subscribe Twist linearVelocity output (EE position delta)
+   - angular (vector3d) - connect from ROS2 Subscribe Twist angularVelocity output (EE rotation delta)
+   - gripper_linear (vector3d) - connect from ROS2 Subscribe Twist (gripper topic) linearVelocity output
+     (gripper value is in the z component: 0=close, 1=open)
 4. Add outputs: joint_positions (double[6] - 5 arm + 1 gripper), jaw_position (double)
 5. Connect ROS2 Subscribe Twist node to this Python Script node
 """
@@ -130,13 +131,23 @@ def setup(db: og.Database):
         try:
             # Try with custom description (Isaac Sim 5.1 API)
             robot_desc_path = _create_lula_robot_description()
-            _solver = LulaKinematicsSolver(
-                robot_description_path=robot_desc_path,
-                urdf_path=_SO101_URDF
-            )
-            db.log_info("Initialized Lula IK solver for SO101 with custom URDF")
+            db.log_info(f"[DEBUG] Attempting Lula init with desc: {robot_desc_path}, urdf: {_SO101_URDF}")
+            
+            # Check if URDF exists
+            if not os.path.exists(_SO101_URDF):
+                db.log_error(f"URDF file not found: {_SO101_URDF}")
+                _solver = "fallback"
+            else:
+                _solver = LulaKinematicsSolver(
+                    robot_description_path=robot_desc_path,
+                    urdf_path=_SO101_URDF
+                )
+                db.log_info("✓ Lula IK solver initialized for SO101")
         except Exception as e:
-            db.log_warning(f"Lula solver init failed: {e}, using fallback Jacobian IK")
+            import traceback
+            db.log_warning(f"Lula solver init failed: {e}")
+            db.log_warning(f"Traceback: {traceback.format_exc()}")
+            db.log_info("Using fallback Jacobian IK - movements may be less accurate")
             _solver = "fallback"  # Will use Jacobian-based IK
 
 
@@ -214,7 +225,7 @@ def compute(db: og.Database):
     
     # Get delta from vector3 inputs (directly from ROS2 Subscribe Twist node)
     # linear = (x, y, z) position delta
-    # angular = (roll, pitch, GRIPPER) - angular.z carries gripper value, not yaw!
+    # angular = (roll, pitch, yaw) rotation delta - standard Twist format
     linear = db.inputs.linear
     angular = db.inputs.angular
     
@@ -224,15 +235,16 @@ def compute(db: og.Database):
     
     try:
         delta_pos = np.array([linear[0], linear[1], linear[2]])
-        # Only use angular.x and angular.y for rotation (roll, pitch)
-        # angular.z contains gripper value, not yaw
-        delta_rpy = np.array([angular[0], angular[1], 0.0])  # No yaw input
-        gripper_from_twist = angular[2]  # Gripper embedded in angular.z
+        # Use all three rotation components (roll, pitch, yaw)
+        delta_rpy = np.array([angular[0], angular[1], angular[2]])
+        db.log_info(f"[DEBUG] Received EE delta - pos: {delta_pos}, rpy: {delta_rpy}")
     except (TypeError, IndexError):
+        db.log_warning(f"[DEBUG] Invalid input format - linear: {linear}, angular: {angular}")
         return True  # Invalid input format, skip silently
     
     # Skip if no movement
     if np.allclose(delta_pos, 0) and np.allclose(delta_rpy, 0):
+        db.log_info(f"[DEBUG] Skipping - delta is near-zero")
         return True
     
     try:
@@ -268,58 +280,102 @@ def compute(db: og.Database):
                 target_rpy = current_rpy + delta_rpy
                 target_quat = euler_angles_to_quat(target_rpy)
                 
-                # Solve IK
-                ik_result, success = _solver.compute_inverse_kinematics(
-                    frame_name=_EE_FRAME,
-                    target_position=target_pos,
-                    target_orientation=target_quat
+                # Clamp target position to reasonable workspace bounds for SO101
+                # SO101 has ~30cm reach, so clamp to prevent unreachable targets
+                workspace_bounds = {
+                    'x': (-0.4, 0.4),
+                    'y': (-0.4, 0.4),
+                    'z': (0.0, 0.5)  # Above table only
+                }
+                target_pos[0] = np.clip(target_pos[0], workspace_bounds['x'][0], workspace_bounds['x'][1])
+                target_pos[1] = np.clip(target_pos[1], workspace_bounds['y'][0], workspace_bounds['y'][1])
+                target_pos[2] = np.clip(target_pos[2], workspace_bounds['z'][0], workspace_bounds['z'][1])
+                
+                db.log_info(f"[DEBUG] Current EE pos: {ee_pos}, Target EE pos: {target_pos}")
+                
+                # Set warm start with current joint positions to help IK converge
+                _solver.set_robot_base_pose(
+                    robot_position=np.array([0.0, 0.0, 0.0]),
+                    robot_orientation=np.array([1.0, 0.0, 0.0, 0.0])
                 )
+                
+                # Try IK - skip orientation for 5-DOF arm (can't control all 6 Cartesian DOFs)
+                # Just use position target, let orientation float
+                try:
+                    ik_result, success = _solver.compute_inverse_kinematics(
+                        frame_name=_EE_FRAME,
+                        target_position=target_pos,
+                        warm_start=current_q
+                    )
+                except TypeError:
+                    # Some versions require orientation
+                    ik_result, success = _solver.compute_inverse_kinematics(
+                        frame_name=_EE_FRAME,
+                        target_position=target_pos,
+                        target_orientation=target_quat,
+                        warm_start=current_q
+                    )
                 
                 if success:
                     target_joints = np.array(ik_result)
+                    db.log_info(f"[DEBUG] Lula IK SUCCESS - target_joints: {target_joints}")
                 else:
+                    db.log_info(f"[DEBUG] Lula IK failed, using fallback. Target: {target_pos}")
                     use_fallback = True
             except Exception as e:
-                db.log_warning(f"Lula IK error: {e}, using fallback")
+                db.log_info(f"Lula IK error: {e}, using fallback")
                 use_fallback = True
         
         # Fallback: Simplified Jacobian-like mapping
         if use_fallback or target_joints is None:
+            db.log_info(f"[DEBUG] Using FALLBACK Jacobian IK")
             try:
                 joint_positions = _robot.get_joint_positions()
                 if joint_positions is None:
                     _physics_ready = False
                     return True
                 current_joints = np.array(joint_positions[:5])
+                db.log_info(f"[DEBUG] Current joints: {current_joints}")
             except Exception as e:
                 _physics_ready = False
                 return True
             
-            # Scale down the delta - different scales for different axes
-            # Z movements were causing spinning, so reduce Z sensitivity
-            pos_scale = 0.05    # Position scale (meters to radians, approximate)
-            rot_scale = 0.1     # Rotation scale
+            # Scale factors for converting EE deltas to joint movements
+            # Pi0 outputs small deltas (~0.01-0.02), so we need higher scaling
+            # Tune these based on desired responsiveness:
+            # - Lower values (0.5-1.0): Smooth, slower movements  
+            # - Higher values (2.0-5.0): Fast, responsive movements
+            pos_scale = 0.1    # Position scale (meters to radians, approximate)
+            rot_scale = 0.1    # Rotation scale (radians to radians)
             
-            # Improved Jacobian-like mapping for SO101
+            # Jacobian-like mapping for SO101
             # SO101 joints: [Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll]
+            # Pi0 output: pos=[x, y, z], rot=[roll, pitch, yaw]
             # Mapping EE movements to joint movements (approximate):
             joint_delta = np.zeros(5)
             
-            # Rotation joint: controls yaw (Y-axis movement + yaw rotation)
+            # Rotation joint (base): controls yaw - responds to Y movement + yaw rotation
+            # Positive Y = move left = positive rotation, Positive yaw = rotate CCW
             joint_delta[0] = delta_pos[1] * pos_scale + delta_rpy[2] * rot_scale
             
-            # Pitch joint: controls up/down reach (Z-axis) - REDUCED sensitivity
-            joint_delta[1] = -delta_pos[2] * pos_scale * 0.5  # Halved Z sensitivity
+            # Pitch joint (shoulder): controls reach height (Z-axis)
+            # Positive Z = move up = negative pitch (shoulder goes back)
+            joint_delta[1] = -delta_pos[2] * pos_scale
             
-            # Elbow joint: controls forward reach (X-axis)  
-            joint_delta[2] = delta_pos[0] * pos_scale + delta_pos[2] * pos_scale * 0.3
+            # Elbow joint: controls forward/backward reach (X-axis)
+            # Positive X = reach forward = elbow extends (positive)
+            # Also couples with Z for proper arm extension
+            joint_delta[2] = delta_pos[0] * pos_scale + delta_pos[2] * pos_scale * 0.5
             
-            # Wrist Pitch: controls EE pitch orientation
+            # Wrist Pitch: controls EE pitch (nodding up/down)
+            # Maps directly from Pi0's pitch rotation
             joint_delta[3] = delta_rpy[1] * rot_scale
             
-            # Wrist Roll: controls EE roll orientation
+            # Wrist Roll: controls EE roll (rotating wrist)
+            # Maps directly from Pi0's roll rotation
             joint_delta[4] = delta_rpy[0] * rot_scale
             
+            db.log_info(f"[DEBUG] Joint delta: {joint_delta}")
             target_joints = current_joints + joint_delta
             
             # Clamp joints to reasonable limits to prevent runaway
@@ -332,22 +388,37 @@ def compute(db: og.Database):
             ])
             for i in range(5):
                 target_joints[i] = np.clip(target_joints[i], joint_limits[i, 0], joint_limits[i, 1])
+            
+            db.log_info(f"[DEBUG] Clamped target joints: {target_joints}")
         
-        # Handle gripper (Jaw) - extracted from angular.z of Twist message
-        gripper_cmd = gripper_from_twist
-        if gripper_cmd is None:
-            gripper_cmd = 0.0
-        # Map [-1, +1] to Jaw position range from URDF: [0, 1.0] radians
-        # -1 = close (0), +1 = open (1.0)
+        # Handle gripper (Jaw) - from separate Twist message's linear.z
+        # Pi0 outputs gripper in ~0-1 range (0 = close, 1 = open)
+        # Gripper comes from a Twist message where linear.z contains the gripper value
+        gripper_linear = db.inputs.gripper_linear if hasattr(db.inputs, 'gripper_linear') else None
+        if gripper_linear is not None:
+            try:
+                gripper_cmd = float(gripper_linear[2])  # z component
+            except (TypeError, IndexError):
+                gripper_cmd = 0.5
+        else:
+            gripper_cmd = 0.5
+        
+        # Clamp Pi0 gripper value to 0-1 range (it may slightly exceed, e.g., 1.01)
+        gripper_cmd = np.clip(gripper_cmd, 0.0, 1.0)
+        
+        # Map [0, 1] directly to Jaw position range from URDF: [0, 1.0] radians
+        # 0 = close (0), 1 = open (1.0)
         jaw_min = 0.0
         jaw_max = 1.0
-        jaw_pos = jaw_min + (jaw_max - jaw_min) * (gripper_cmd + 1.0) / 2.0
-        jaw_pos = max(jaw_min, min(jaw_max, jaw_pos))
+        jaw_pos = jaw_min + (jaw_max - jaw_min) * gripper_cmd
         
         # Output combined 6-element array (5 arm joints + 1 gripper)
         all_joints = np.append(target_joints, jaw_pos)
         db.outputs.joint_positions = all_joints.tolist()
         db.outputs.jaw_position = jaw_pos
+        
+        # Log final output
+        db.log_info(f"[OUTPUT] Joint target: {all_joints.tolist()}")
         
         return True
         

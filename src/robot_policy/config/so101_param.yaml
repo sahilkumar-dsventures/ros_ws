@@ -20,7 +20,7 @@ policy_node:
     
     # Policy server
     policy_server_url: "http://localhost:8000/predict"
-    task_description: "Pick up the cube"
+    task_description: "Pick the red rubic cube"
     
     # Control parameters
     control_frequency: 10.0
